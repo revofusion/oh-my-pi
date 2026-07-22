@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import * as path from "node:path";
 import { Agent, AppendOnlyContextManager } from "@oh-my-pi/pi-agent-core";
 import type { ProviderSessionState } from "@oh-my-pi/pi-ai";
+import * as oauthUtils from "@oh-my-pi/pi-ai/registry/oauth";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
@@ -13,15 +14,28 @@ interface FreshHarness {
 	agent: Agent;
 	session: AgentSession;
 	sessionManager: SessionManager;
+	authStorage: AuthStorage;
 }
 
 const cleanup: Array<() => Promise<void>> = [];
+const OAUTH_PROVIDER = "fresh-session-oauth";
+
+function oauthCredential(suffix: string) {
+	return {
+		type: "oauth" as const,
+		access: `access-${suffix}`,
+		refresh: `refresh-${suffix}`,
+		expires: Date.now() + 60 * 60_000,
+		accountId: `account-${suffix}`,
+	};
+}
 
 afterEach(async () => {
 	while (cleanup.length > 0) {
 		const run = cleanup.pop();
 		if (run) await run();
 	}
+	vi.restoreAllMocks();
 });
 
 async function createFreshHarness(): Promise<FreshHarness> {
@@ -47,7 +61,7 @@ async function createFreshHarness(): Promise<FreshHarness> {
 		authStorage.close();
 		tempDir.removeSync();
 	});
-	return { agent, session, sessionManager };
+	return { agent, session, sessionManager, authStorage };
 }
 
 describe("AgentSession fresh provider state", () => {
@@ -85,6 +99,22 @@ describe("AgentSession fresh provider state", () => {
 		expect(session.providerSessionState.size).toBe(0);
 		expect(appendOnlyContext.log.length).toBe(0);
 		expect(appendOnlyContext.prefix.built).toBe(false);
+	});
+
+	it("preserves strict OAuth account pins across provider-session resets", async () => {
+		const { authStorage, session } = await createFreshHarness();
+		vi.spyOn(oauthUtils, "getOAuthApiKey").mockImplementation(async (provider, credentials) => {
+			const credential = credentials[provider];
+			return credential ? { newCredentials: credential, apiKey: credential.access } : null;
+		});
+		await authStorage.set(OAUTH_PROVIDER, [oauthCredential("a"), oauthCredential("b")]);
+		expect(authStorage.pinSessionOAuthAccount(OAUTH_PROVIDER, session.sessionId, 1)).toBe(true);
+
+		const freshResult = session.freshSession();
+
+		expect(freshResult).toBeDefined();
+		if (!freshResult) return;
+		expect(await authStorage.getApiKey(OAUTH_PROVIDER, freshResult.sessionId)).toBe("access-b");
 	});
 
 	it("drops the transient provider id when a real new session starts", async () => {

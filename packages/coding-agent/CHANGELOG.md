@@ -55,6 +55,7 @@
 - Fixed in-progress aborts awaiting `session_stop` extension handlers whose results would be discarded.
 - Fixed `/retry` reporting "Nothing to retry" after a stream stalled or aborted mid-tool-call.
 - Fixed locally consumed extension commands triggering automatic title generation and exposing their command text to the title model.
+- Added `/provider` to pin the current session, advisors, and spawned subagents to an exact stored OAuth account, preserving the pin across `/fresh` provider resets, with an option to restore automatic ranked/round-robin selection.
 
 ## [17.0.7] - 2026-07-21
 
